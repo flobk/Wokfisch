@@ -42,17 +42,15 @@ def load_images():
     images = {}
     for piece in pieces:
         images[f'white_{piece}'] = pygame.transform.scale(
-            pygame.image.load(os.path.join("frontend/img", f"white-{piece}2.png")),
+            pygame.image.load(os.path.join("frontend/img", f"white-{piece}.png")),
             (SQUARE_SIZE, SQUARE_SIZE)
         )
         images[f'black_{piece}'] = pygame.transform.scale(
-            # pygame.image.load(os.path.join("frontend/img", f"black-{piece}2.png")),
-            pygame.image.load(os.path.join("frontend/img", f"resized/black-{piece}.png")),
+            pygame.image.load(os.path.join("frontend/img", f"black-{piece}.png")),
             (SQUARE_SIZE, SQUARE_SIZE)
         )
     images["circle"] = pygame.transform.scale(
-            # pygame.image.load(os.path.join("frontend/img", f"circle2.png")),
-            pygame.image.load(os.path.join("frontend/img", f"resized/circle.png")),
+            pygame.image.load(os.path.join("frontend/img", f"circle.png")),
             (SQUARE_SIZE, SQUARE_SIZE))
     return images
 
