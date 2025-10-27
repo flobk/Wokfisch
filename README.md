@@ -6,7 +6,7 @@
 - written in C++, frontend in python
 - move generation written by myself
     - helpful reference: https://web.archive.org/web/20250910134338/https://www.codeproject.com/articles/Worlds-fastest-Bitboard-Chess-Movegenerator (original website doesnt exist anymore)
-    - code calculates legal chess positions fast (see TestSuite.cpp)
+    - the move generation code calculates legal chess positions fast (see TestSuite.cpp)
     - I achieve the following N positions per second:
       
     | Processor (single core) | with bulk-leaf counting | without bulk-leaf counting |
