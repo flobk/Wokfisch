@@ -20,6 +20,6 @@
 ---
 - To get started navigate into the backend dir and git clone pybind11 (github.com/pybind/pybind11.git)
 - adjust the backend/CMakeLists.txt to your python version and path
-- create and navigate into a build directory
+- create a build directory and navigate into it 
 - use 'cmake ..' and then 'make' (or 'cmake --build .') to build
-- try running main.py and adjust paths if necessary
+- navigate back to the main directory and run main.py
