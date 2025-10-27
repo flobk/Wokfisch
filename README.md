@@ -23,3 +23,4 @@
 - create a build directory and navigate into it 
 - use 'cmake ..' and then 'make' (or 'cmake --build .') to build
 - navigate back to the main directory and run main.py
+- in the beginning of the main.py, one can adjust starting position, which side plays white, etc.
