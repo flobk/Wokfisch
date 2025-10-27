@@ -18,8 +18,8 @@
     - I plan to use a Neural Net (NNUE) in the future for eval, the implementation is halfway done
 
 ---
-- To get started git clone pybind11 into the main repository.
-- adjust the MakeList.txt to your python version and path
+- To get started navigate into the backend dir and git clone pybind11 (github.com/pybind/pybind11.git)
+- adjust the backend/CMakeLists.txt to your python version and path
 - create and navigate into a build directory
-- use cmake.. and make to build
+- use 'cmake ..' and then 'make' (or 'cmake --build .') to build
 - try running main.py and adjust paths if necessary
