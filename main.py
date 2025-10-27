@@ -1,16 +1,10 @@
 from frontend import *
-# Pc
-from backend.buildPc.Timer import Timer # type: ignore
-from backend.buildPc.Board import Board # type: ignore
-from backend.buildPc.Wokfisch import Wokfisch # type: ignore
-# from backend.buildPc.Board_qNNUE import Board_qNNUE # type: ignore
-# from backend.buildPc.Wokfisch_qNNUE import Wokfisch_qNNUE # type: ignore
-# Mac
-# from backend.buildMac.Timer import Timer # type: ignore
-# from backend.buildMac.Board import Board # type: ignore
-# from backend.buildMac.Wokfisch import Wokfisch # type: ignore
-# from backend.buildMac.Board_qNNUE import Board_qNNUE # type: ignore
-# from backend.buildMac.Wokfisch_qNNUE import Wokfisch_qNNUE # type: ignore
+# adjust if necessary
+from backend.build.Timer import Timer # type: ignore
+from backend.build.Board import Board # type: ignore
+from backend.build.Wokfisch import Wokfisch # type: ignore
+# from backend.build.Board_qNNUE import Board_qNNUE # type: ignore
+# from backend.build.Wokfisch_qNNUE import Wokfisch_qNNUE # type: ignore
 import time
 
 def main():
