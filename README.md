@@ -16,3 +16,10 @@
     - Search: NegaMax with Alpha-Beta Pruning, iterative Deepening, Aspiration windows, Quiescence search, zobrist hashing, NMP/LMR/LMP, MVV-LVA, etc.
     - Eval: basic PSQT, game phase calculation
     - I plan to use a Neural Net (NNUE) in the future for eval, the implementation is halfway done
+
+---
+- To get started git clone pybind11 into the main repository.
+- adjust the MakeList.txt to your python version and path
+- create and navigate into a build directory
+- use cmake.. and make to build
+- try running main.py and adjust paths if necessary
