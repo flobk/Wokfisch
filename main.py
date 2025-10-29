@@ -15,13 +15,14 @@ def main():
     # player2 = Wokfisch_qNNUE()
     verbose = False
 
+    # Adjust to own preference #
     # Initialize Players
-    computerIsWhite = False
-    computerIsBlack = True
-    # fen = "3r1rk1/1b2b1pp/p3p3/R3Np2/2pB1P2/2P3qP/P1PQ2P1/5RK1 b - - 0 1"
-    # fen = "rnbqkb1r/pp2pppp/3p1n2/2p5/4P3/2P2N2/PP1P1PPP/RNBQKB1R w KQkq - 1 4"
-    # fen = "r2q3r/pb3k2/3ppn1p/n1p2pp1/2P5/P1PBPNB1/5PPP/RQ3RK1 w - - 2 16"
-    fen = None
+    computerIsWhite = False # set True, False or None
+    computerIsBlack = True # set True, False or None
+
+    # Starting position
+    fen = None # set None, or a custom one
+    
     while computerIsWhite is None:
         whitePlayerInput = input("Computer is white? (y/n) ")
         if whitePlayerInput == "y":
@@ -45,7 +46,7 @@ def main():
         board = Board(str(fen))
         # board = Board_qNNUE(str(fen))
     else:
-        # fen = input("FEN: ")
+        fen = input("FEN: ")
         board = Board(str(fen))
         # board = Board_qNNUE(str(fen))
 
