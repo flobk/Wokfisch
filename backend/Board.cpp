@@ -1365,6 +1365,43 @@ public:
         zobristKey = getZobristKey();
         plycount--;
     };
+    inline void makeNullMove(){
+        // Save current state
+        uint8_t enPassantFile = enPassantFileHistory[plycount];
+        // Update game state information
+        plycount++;
+        whiteToMove = !whiteToMove;
+        // Store a null move 
+        moveHistory[plycount] = 0;
+        capturedPieceHistory[plycount] = 0;
+        // Castling rights remain unchanged
+        castlingRightHistory[plycount] = castlingRightHistory[plycount - 1];
+        // Clear en passant since opponent can't capture en passant after null move
+        enPassantFileHistory[plycount] = 0xFF;
+        // Increment halfmove clock (null move doesn't reset it)
+        halfmoveClockHistory[plycount] = halfmoveClockHistory[plycount - 1] + 1;
+        // Update zobrist key for side to move and en passant
+        zobristKey = getZobristKey();
+        zobristKeyHistory[plycount] = zobristKey;
+        // Increment fullmove number if black made the null move
+        if (whiteToMove) fullmoveNumber++;
+    }
+    inline void unmakeNullMove(){
+        if (plycount == 0) return;  // No moves to undo
+        // Update game state information
+        whiteToMove = !whiteToMove;
+        // Clear history entries
+        capturedPieceHistory[plycount] = 0;
+        castlingRightHistory[plycount] = 0;
+        enPassantFileHistory[plycount] = 0;
+        halfmoveClockHistory[plycount] = 0;
+        zobristKeyHistory[plycount] = 0;
+        // Decrement fullmove number if we're undoing a black null move
+        if (!whiteToMove) fullmoveNumber--;
+        // Restore zobrist key
+        zobristKey = getZobristKey();
+        plycount--;
+    }
 
     // Game end functions
     inline bool isCheck() {
@@ -1505,6 +1542,29 @@ public:
             }
         }
         
+        return false;
+    }
+    bool isEndgame() const {
+        // Get the bitboards for the player whose turn it is
+        uint64_t friendly_rooks = whiteToMove ? whiteRooks : blackRooks;
+        uint64_t friendly_queens = whiteToMove ? whiteQueens : blackQueens;
+        uint64_t friendly_bishops = whiteToMove ? whiteBishops : blackBishops;
+        uint64_t friendly_knights = whiteToMove ? whiteKnights : blackKnights;
+    
+        // A common heuristic: if you only have minor pieces (or less),
+        // null move pruning can be risky. We also check for pawns.
+        // If there are no pieces besides king and pawns, it's definitely an endgame.
+        if ((friendly_rooks | friendly_queens | friendly_bishops | friendly_knights) == 0) {
+            return true;
+        }
+    
+        // A slightly more robust check: one minor piece is also considered an endgame
+        // for NMP purposes.
+        if (popcount64(friendly_rooks | friendly_queens) == 0 &&
+            popcount64(friendly_bishops | friendly_knights) <= 1) {
+            return true;
+        }
+    
         return false;
     }
     
