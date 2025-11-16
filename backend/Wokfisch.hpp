@@ -36,7 +36,8 @@ public:
     std::vector<TranspositionEntry> TT;
     // Keeping track of which quiet move move is most likely to cause a beta cutoff.
     // The higher the score is, the more likely a beta cutoff is, so in move ordering we will put these moves first.
-    uint64_t quietHistory[4096] = {0};
+    
+    int64_t quietHistory[4096] = {0};  // At line 41 in WokfischV2.hpp
     // Keep track of killer moves which are so good that they must be considered first
     uint16_t killers[256] = {0};
     // set root best move as Class variable
@@ -45,7 +46,7 @@ public:
 
     // Search //
     uint64_t nodesVisited = 0;
-    uint16_t returnBestMove(Board board, Timer timer, bool verbose=false) {
+    uint16_t returnBestMove(Board& board, Timer& timer, bool verbose=false) {
         // The move that will eventually be reported as our best move
         rootBestMove = 0;
         // Initialize parameters that exist only during one search
@@ -78,7 +79,7 @@ public:
                 
                 // Search with the current window
                 score = negaMax(board, timer, allocatedTime, 0, depth, alpha, beta, false);
-                
+
                 // Hard time limit
                 if (timer.MillisecondsElapsedThisTurn() > allocatedTime) {
                     break;
@@ -99,7 +100,7 @@ public:
 
         // Calculate nodes per second
         double nodesPerSecond = static_cast<double>(nodesVisited) / (duration.count() / 1000.0);
-
+        
         if (verbose){
             std::cout << "Search eval: " << std::endl;
             std::cout << score << " "<< std::fixed << std::setprecision(2) << nodesPerSecond / 1000000 << "M/s"<< std::endl;
@@ -108,196 +109,277 @@ public:
         if (rootBestMove == 0) {
             std::cout << "HELP " << std::endl;
         }
+        
         return rootBestMove;
     }
-    int negaMax(Board& board, Timer& timer, int allocatedTime, int ply, int depth, int alpha, int beta, bool nullAllowed){
+    
+    int negaMax(Board& board, Timer& timer, int allocatedTime, int ply, int depth, int alpha, int beta, bool nullAllowed) {
         ++nodesVisited;
-        // Repetition detection
-        // There is no need to check for 3-fold repetition, if a single repetition (0 = draw) ends up being the best,
-        // we can trust that repeating moves is the best course of action in this position.
-        uint64_t key = board.zobristKey;
-        if (nullAllowed && board.isRepeatedPosition(key)){
-            return 0;
-        }
-        // Check extension: if we are in check, we should search deeper. More info: https://www.chessprogramming.org/Check_Extensions
-        bool inCheck = board.isCheck();
-        if (inCheck)
-            depth++;
         
-        // In-qsearch is a flag that determines whether not we should prune positions ans whether or not to search non-captures.
-        // Qsearch, also meaning quiescence search, is a mode that only looks at captures in order to give a more accurate
-        // estimate "if all the viable captures happen". In this engine it is interlaced with the main search to save tokens, although
-        // in most engines you will see a separate function for it.
-        // Tempo is the idea that each move is benefitial to us, so we adjust the static eval using a fixed value.
-        // We use 15 tempo for evaluation for mid-game, 0 for end-game.    
+        // Early Termination Checks  
+        if (shouldTerminateEarly(board, timer, allocatedTime, depth, nullAllowed)) {
+            return handleEarlyTermination(board, ply, depth, alpha, beta);
+        }
+        
+        // Position Setup  
+        uint64_t key = board.zobristKey;
+        bool inCheck = board.isCheck();
         bool inQsearch = (depth <= 0);
-        int bestScore = -INF;
-        bool doPruning = alpha == beta - 1 && !inCheck;
-        int score = 15;
-        int phase = 0;
-
-        // Evaluate
-        score += evaluate(board);
-
-        // Local method for similar calls to Search, inspired by Tyrant7's approach here: https://github.com/Tyrant7/Chess-Challenge
-        // We keep known values, but we create a local method that will be used to implement 3-fold PVS. More on that later on
-        auto defaultSearch = [&](int beta, int reduction = 1, bool nullAllowed = true) {
-            return -negaMax(board, timer, allocatedTime, ply + 1, depth - reduction, -beta, -alpha, nullAllowed); // Return the score for consistency
-        };
-
-        // Transposition table lookup
-        // Look up best move known so far if it is available
+        bool doPruning = (alpha == beta - 1) && !inCheck;
+        
+        if (inCheck) depth++; // Check extension
+        
+        int score = 15 + evaluate(board); // Static eval with tempo
+        int bestScore = inQsearch ? score : -INF;
+        
+        // Transposition Table Lookup  
         TranspositionEntry& ttEntry = TT[key % TT.size()];
-        uint64_t ttKey = ttEntry.positionKey;
-        uint16_t ttMove = ttEntry.move;
-        int ttDepth = ttEntry.depth;
-        int ttScore = ttEntry.score;
-        uint8_t ttFlag = ttEntry.flag;
+        uint16_t ttMove = 0; // This will be set by the helper function
+        int ttScore = 0;     // This will be set by the helper function on a cutoff
+        uint8_t ttFlag = 0;  // Upper bound
 
-        if (ttKey == key){
-            // If conditions match, we can trust the table entry and return immediately.
-            // This is a token optimized way to express that: we can trust the score stored in TT and return immediately if:
-            // 1. The depth remaining is higher or equal to our current
-            //   a. Either the flag is exact, or:
-            //   b. The stored score has an upper bound, but we scored below the stored score, or:
-            //   c. The stored score has a lower bound, but we scored above the scored score
-            if (alpha == beta - 1 && ttDepth >= depth && ttFlag != (ttScore >= beta ? 0 : 2)){
-                // std::cout << ttScore << std::endl;
-                return ttScore;
-            }
-
-            // ttScore can be used as a better positional evaluation
-            // If the score is outside what the current bounds are, but it did match flag and depth,
-            // then we can trust that this score is more accurate than the current static evaluation,
-            // and we can update our static evaluation for better accuracy in pruning
-            if (ttFlag != (ttScore > score ? 0 : 2))
-                score = ttScore;
+        if (handleTranspositionTable(ttEntry, key, depth, alpha, beta, ttScore, ttMove, ply)) {
+            // The helper function returned true, indicating a cutoff is possible.
+            // It has already calculated the correct score to return (alpha, beta, or exact score).
+            return ttScore;
         }
-
-        // Internal iterative reductions
-        // If this is the first time we visit this node, it might not be worth searching it fully
-        // because it might be a random non-promising node. If it gets visited a second time, it's worth fully looking into.
-        else if (depth > 3)
+        
+        // Internal Iterative Reduction - reduce depth if no TT move found
+        if (ttMove == 0 && depth > 3 && !inQsearch) {
             depth--;
-
-        // We look at if it's worth capturing further based on the static evaluation
-        if (inQsearch){
-            if (score >= beta)
-                return score;
-
-            if (score > alpha)
-                alpha = score;
-
-            bestScore = score;
         }
 
-        else if (doPruning){
-            // Reverse futility pruning
-            // If our current score is way above beta, depending on the score, we can use this as a heuristic to not look
-            // at shallow-ish moves in the current position, because they are likely to be countered by the opponent.
-            // More info: https://www.chessprogramming.org/Reverse_Futility_Pruning
-            if (depth < 7 && score - depth * 75 > beta)
+        // Quiescence Stand Pat  
+        if (inQsearch) {
+            if (score >= beta) return score;
+            if (score > alpha) alpha = score;
+        }
+        
+        //  Pruning Techniques  
+        if (doPruning && !inQsearch) {
+            // Reverse Futility Pruning
+            if (depth < 7 && score - depth * 75 > beta) {
                 return score;
-
-            // Null move pruning
-            // The idea is that each move in a chess engine brings some advantage. If we skip our own move, do a search with reduced depth,
-            // and our position is still so winning that the opponent can't refute it, we claim that this is too good to be true,
-            // and we discard this move. An important observation is the `phase != 0` term, which checks if all remaining
-            // pieces are pawns/kings, this reduces the cases of mis-evaluations of zugzwang in the end-game.
-            // More info: https://www.chessprogramming.org/Null_Move_Pruning
-            if (nullAllowed && score >= beta && depth > 2 && phase != 0){
-                board.whiteToMove = !board.whiteToMove; // MIGHT NEED IMPROVEMENT
-                defaultSearch(beta, 4 + depth / 6, false);
-                board.whiteToMove = !board.whiteToMove;
-                if (score >= beta)
-                    return beta;
+            }
+            
+            // Null Move Pruning
+            if (nullAllowed && depth >= 3 && score >= beta && !board.isEndgame()) {
+                // Adaptive reduction based on depth
+                int R = 3 + depth / 6;
+                
+                board.makeNullMove();
+                int nullScore = -negaMax(board, timer, allocatedTime, ply + 1, depth - 1 - R, -beta, -beta + 1, false);
+                board.unmakeNullMove();
+                
+                if (nullScore >= beta) {
+                    return beta; // Fail-high cutoff
+                }
             }
         }
-
+        
+        // Main Search Loop
         std::vector<uint16_t> moves = generateAndOrderMoves(board, ttMove, inQsearch, ply);
-
         std::vector<uint16_t> quietsEvaluated;
         int movesEvaluated = 0;
-        ttFlag = 0; // Upper
+        int quietsSearched = 0;
         
         for (const auto& move : moves) {
-            // A quiet move traditionally means a move that doesn't cause a capture to be the best move,
-            // is not a promotion, and doesn't give check. For token savings we only consider captures.
-            bool isQuiet = board.getPieceOfSquare(board.getTo(move));
-
-            board.makeMove(move);
-
-            // Principal variation search
-            // We trust that our move ordering is good enough to ensure the first move searched to be the best move most of the time,
-            // so we only search the first move fully and all following moves with a zero width window (beta = alpha + 1).
-            // More info: https://en.wikipedia.org/wiki/Principal_variation_search
-
-            // Late move reduction
-            // As the search deepens, looking at each move costs more and more. Since we have some other heuristics,
-            // like the move score quiet moves, as well as some other facts like whether or not this move is a capture,
-            // we can search shallower for not promising moves, most of which came later at our move ordering.
-            // More info: https://www.chessprogramming.org/Late_Move_Reductions
-            if (inQsearch || movesEvaluated == 0 // No PVS for first move or qsearch
-                || (depth <= 2 || movesEvaluated <= 4 || !isQuiet // Conditions not to do LMR
-                // || defaultSearch(alpha + 1, depth / 2) > alpha)
-                || defaultSearch(alpha + 1, 2 + depth / 8 + movesEvaluated / 16 + static_cast<int>(doPruning) - compareTo(quietHistory[move & 4095], 0)) > alpha)
-                && alpha < defaultSearch(alpha + 1) && score < beta){ // Full depth search failed high
-                score = defaultSearch(beta); // Do full window search
+            // Late Move Pruning
+            if (doPruning && quietsSearched > 3 + depth * depth) {
+                break;
             }
-
+            
+            bool isQuiet = !board.isCapture(move);
+            
+            board.makeMove(move);
+            
+            // Search Current Move  
+            score = searchMove(board, timer, allocatedTime, ply, depth, alpha, beta, 
+                              move, movesEvaluated, inQsearch, doPruning, isQuiet);
+            
             board.unmakeMove();
-
-            // If we are out of time, stop searching
-            if (depth > 2 && timer.MillisecondsElapsedThisTurn() > allocatedTime){
+            
+            // Time check
+            if (depth > 2 && timer.MillisecondsElapsedThisTurn() > allocatedTime) {
                 return bestScore;
             }
-
-            // Count the number of moves we have evaluated for detecting mates and stalemates
+            
             movesEvaluated++;
-
-            // If the move is better than our current best, update our best score
-            if (score > bestScore){
+            
+            // Update Best Move  
+            if (score > bestScore) {
                 bestScore = score;
-                
-                // If the move is better than our current alpha, update alpha and our best move
-                if (score > alpha){
+
+                if (score > alpha) {
                     ttMove = move;
-                    if (ply == 0) {
-                        rootBestMove = move;
-                    }
+                    if (ply == 0) rootBestMove = move;
                     alpha = score;
                     ttFlag = 1; // Exact
                     
-                    // If the move is better than our current beta, we can stop searching
-                    if (score >= beta){
-
-                        ttFlag++; // Lower
+                    // Beta cutoff
+                    if (score >= beta) {
+                        ttFlag = 2; // Lower bound
+                        if (isQuiet) updateHistoryAndKillers(move, ply, depth, quietsEvaluated);
                         break;
                     }
                 }
             }
-
-            if (isQuiet){
-                quietsEvaluated.emplace_back(move);
+            
+            if (isQuiet) {
+                quietsEvaluated.push_back(move);
+                quietsSearched++;
             }
-
-            // Late move pruning
-            if (doPruning && quietsEvaluated.size() > 3 + depth * depth)
-                // std::cout << "LMP" << std::endl;
-                break;
         }
         
-        // Checkmate / stalemate detection
-        // 1000000 = mate score
-        if (movesEvaluated == 0)
-            return inQsearch ? bestScore : (inCheck ? ply - INF/2 : 0);
-
-        // // Store the current position in the transposition table
-        TT[key % TT.size()] = {key, ttMove, inQsearch ? 0 : depth, bestScore, ttFlag};
+        // Terminal Position Check  
+        if (movesEvaluated == 0) {
+            return inQsearch ? bestScore : (inCheck ? -INF/2 + ply : 0); // FIX #5: Correct mate score
+        }
+        
+        // Store in Transposition Table  
+        // Adjust mate scores before storing
+        int storeScore = bestScore;
+        if (bestScore > INF/2 - 1000) {
+            storeScore += ply; // Mate score: adjust back to root perspective
+        } else if (bestScore < -INF/2 + 1000) {
+            storeScore -= ply; // Mated score: adjust back to root perspective
+        }
+        
+        TT[key % TT.size()] = {key, ttMove, inQsearch ? 0 : depth, storeScore, ttFlag};
         
         return bestScore;
     }
+
+    int searchMove(Board& board, Timer& timer, int allocatedTime, int ply, int depth,
+        int alpha, int beta, uint16_t move, int movesEvaluated, 
+        bool inQsearch, bool doPruning, bool isQuiet) {
+
+        auto defaultSearch = [&](int searchBeta, int reduction = 1, bool nullAllowed = true) {
+            return -negaMax(board, timer, allocatedTime, ply + 1, depth - reduction, 
+                            -searchBeta, -alpha, nullAllowed);
+        };
+
+        // First move or quiescence: full search
+        if (inQsearch || movesEvaluated == 0) {
+            return defaultSearch(beta);
+        }
+
+        // Late Move Reduction conditions
+        bool skipLMR = (depth <= 2 || movesEvaluated <= 4 || !isQuiet);
+
+        if (skipLMR) {
+            // No LMR, try zero-window search
+            int score = defaultSearch(alpha + 1);
+            if (score > alpha && score < beta) {
+                return defaultSearch(beta); // Re-search with full window
+            }
+            return score;
+        }
+
+        // Apply LMR
+        int reduction = 2 + depth / 8 + movesEvaluated / 16 + 
+                    static_cast<int>(doPruning) - 
+                    compareTo(quietHistory[move & 4095], 0);
+
+        int score = defaultSearch(alpha + 1, reduction);
+
+        // If reduced search fails high, re-search at full depth
+        if (score > alpha) {
+            score = defaultSearch(alpha + 1);
+            
+            // If zero-window search fails high, do full window search
+            if (score > alpha && score < beta) {
+                score = defaultSearch(beta);
+            }
+        }
+
+        return score;
+    }
+
+
+    // Helper //
+    bool shouldTerminateEarly(Board& board, Timer& timer, int allocatedTime, int depth, bool nullAllowed) {
+        return nullAllowed && board.isRepeatedPosition(board.zobristKey);
+    }
     
+    int handleEarlyTermination(Board& board, int ply, int depth, int alpha, int beta) {
+        return 0; // Draw by repetition
+    }
+
+    bool handleTranspositionTable(TranspositionEntry& ttEntry, uint64_t key, int depth, 
+        int alpha, int beta, int& outScore, uint16_t& outTTMove, int ply) {
+        // Check for hash miss
+        if (ttEntry.positionKey != key) {
+            if (depth > 3) depth--;
+            return false;
+        }
+
+        outTTMove = ttEntry.move;
+
+        // Check if the stored search was deep enough to be useful for a cutoff.
+        // If ttEntry.depth < depth, the previous search was shallower and its score is less reliable.
+        if (ttEntry.depth < depth) {
+            return false;
+        }
+
+        if (ply == 0) return false;
+
+        // Adjust stored score for mate distance
+        int adjustedScore = ttEntry.score;
+        if (adjustedScore > INF/2 - 1000) {
+            adjustedScore -= ply;
+        } else if (adjustedScore < -INF/2 + 1000) {
+            adjustedScore += ply;
+        }
+
+        // Determine if we can cause a cutoff based on flag
+        uint8_t flag = ttEntry.flag;
+
+        if (flag == 1) { // EXACT
+            outScore = adjustedScore;
+            return true;
+        }
+
+        if (flag == 2) { // LOWER_BOUND
+            if (adjustedScore >= beta) {
+                outScore = beta;
+                return true;
+            }
+        }
+
+        if (flag == 0) { // UPPER_BOUND
+            if (adjustedScore <= alpha) {
+                outScore = alpha;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void updateHistoryAndKillers(uint16_t move, int ply, int depth, 
+        const std::vector<uint16_t>& quietsEvaluated) {
+        // Update killer move
+        killers[ply] = move;
+
+        // Calculate bonus/penalty (capped at reasonable values)
+        int bonus = std::min(depth * depth * 2, 400);
+
+        // Reward the move that caused the cutoff
+        quietHistory[move & 4095] += bonus;
+
+        // Penalize moves that were tried but failed
+        for (const auto& quietMove : quietsEvaluated) {
+        quietHistory[quietMove & 4095] -= bonus;
+        }
+
+        // Clamp all history values to prevent overflow
+        quietHistory[move & 4095] = std::max<int64_t>(-10000, std::min<int64_t>(10000, quietHistory[move & 4095]));
+        for (const auto& quietMove : quietsEvaluated) {
+        quietHistory[quietMove & 4095] = std::max<int64_t>(-10000, std::min<int64_t>(10000, quietHistory[quietMove & 4095]));
+        }
+    }
+
 
     // Evaluation //
     inline int evaluate(Board& board, bool verbose=false) {
@@ -368,7 +450,7 @@ public:
         // Simple game phase calculation based on remaining material
         int gamePhase = 0;
 
-        gamePhase += popcount64(board.whiteBishops | board.whiteKnights | board.blackBishops | board. blackKnights) * 300;
+        gamePhase += popcount64(board.whiteBishops | board.whiteKnights | board.blackBishops | board.blackKnights) * 300;
         gamePhase += popcount64(board.whiteRooks | board.blackRooks) * 500;
         gamePhase += popcount64(board.whiteQueens | board.blackQueens) * 900;
 
@@ -400,7 +482,7 @@ public:
     }
 
 
-    // Helper functions //
+    // Utility //
     int compareTo(int value, int comparedTo) {
         if (value < comparedTo) return -1;
         if (value > comparedTo) return 1;
@@ -431,37 +513,67 @@ public:
     std::vector<uint16_t> generateAndOrderMoves(Board& board, const uint16_t& ttMove, bool inQsearch, int ply) {
         std::vector<uint16_t> moves = board.generateAllLegalMoves();
         
-        if (inQsearch) { // filter out captures
-            std::vector<uint16_t> nonQuietMoves;
+        if (inQsearch) {
+            // In quiescence, only search captures
+            std::vector<uint16_t> captures;
+            captures.reserve(moves.size());
             for (const auto& move : moves) {
                 if (board.getPieceOfSquare(board.getTo(move)) != 0) {
-                    nonQuietMoves.push_back(move);
+                    captures.push_back(move);
                 }
             }
-            moves = nonQuietMoves;
+            moves = std::move(captures);
         }
         
+        // Sort using the scoring function
         std::sort(moves.begin(), moves.end(), [this, &board, &ttMove, ply](const uint16_t& a, const uint16_t& b) {
             return getMoveScore(board, a, ttMove, ply) > getMoveScore(board, b, ttMove, ply);
         });
         
         return moves;
     }
-    int64_t getMoveScore(Board& board, const uint16_t& move, const uint16_t& ttMove, int ply) {
-        if (move == ttMove) {
-            return 9000000000000000LL;
-        }
-        uint8_t capturePiece = board.getPieceOfSquare(board.getTo(move));
-        if (capturePiece) {
-            return 1000000000000000LL * static_cast<int64_t>(capturePiece) - static_cast<int64_t>(board.getPieceOfSquare(board.getFrom(move)));
-        }
-        if (move == killers[ply]) {
-            return 500000000000000LL;
-        }
-        return quietHistory[move & 4095];
-    }
     
+    int64_t getMoveScore(Board& board, const uint16_t& move, const uint16_t& ttMove, int ply) {
+        // Priority 1: Hash move (must be first)
+        if (move == ttMove) {
+            return 10000000;
+        }
+        
+        uint8_t capturedPiece = board.getPieceOfSquare(board.getTo(move));
+        uint8_t movingPiece = board.getPieceOfSquare(board.getFrom(move));
+        
+        // Priority 2 & 6: Captures (good and bad)
+        if (capturedPiece != 0) {
+            // MVV-LVA: Most Valuable Victim - Least Valuable Attacker
+            // Multiply victim value by 10, subtract attacker value
+            // This naturally separates good captures (positive SEE) from bad ones
+            int captureScore = capturedPiece * 10 - movingPiece;
+            
+            // Good captures: score 1,000,000 to 9,000,000
+            // Bad captures: score -9,000,000 to -1,000,000
+            return 1000000 + captureScore * 100000;
+        }
+        
+        // Check for promotions (Priority 3)
+        // Assuming you have a way to detect promotions - adjust based on your move encoding
+        uint8_t promotionPiece = (move >> 12) & 0xF; // Example: if you store promo in bits 12-15
+        if (promotionPiece != 0) {
+            return 900000 + promotionPiece * 10000; // Queen promo = 950000, etc.
+        }
+        
+        // Priority 4: Killer moves
+        if (move == killers[ply]) {
+            return 800000;
+        }
+        
+        // Priority 5: History heuristic for quiet moves
+        // History scores should be in range [-10000, 10000] after clamping
+        // This gives us range [0, 10000] which is well below killer moves
+        int history = quietHistory[move & 4095];
+        return history;
+    }
 
+    
 private:
     // Piece square Tables //
     struct PieceData {
@@ -469,15 +581,6 @@ private:
         int eg_value;           // End-game value
         const int* mg_table;    // Pointer to middle-game piece-square table
         const int* eg_table;    // Pointer to end-game piece-square table
-    };
-    PieceData piece_data[7] = {
-        {0, 0, nullptr, nullptr},
-        {82, 94, mg_pawn_table, eg_pawn_table},     // Pawn
-        {337, 281, mg_knight_table, eg_knight_table}, // Knight
-        {365, 297, mg_bishop_table, eg_bishop_table}, // Bishop
-        {477, 512, mg_rook_table, eg_rook_table},   // Rook
-        {1025, 936, mg_queen_table, eg_queen_table}, // Queen
-        {0, 0, mg_king_table, eg_king_table}                   // King (assume no table for the king here)
     };
 
     const int mg_pawn_table[64] = {
@@ -599,6 +702,16 @@ private:
         -19,  -3,  11,  21,  23,  16,   7,  -9,
         -27, -11,   4,  13,  14,   4,  -5, -17,
         -53, -34, -21, -11, -28, -14, -24, -43
+    };
+
+    PieceData piece_data[7] = {
+        {0, 0, nullptr, nullptr},
+        {82, 94, mg_pawn_table, eg_pawn_table},     // Pawn
+        {337, 281, mg_knight_table, eg_knight_table}, // Knight
+        {365, 297, mg_bishop_table, eg_bishop_table}, // Bishop
+        {477, 512, mg_rook_table, eg_rook_table},   // Rook
+        {1025, 936, mg_queen_table, eg_queen_table}, // Queen
+        {0, 0, mg_king_table, eg_king_table}                   // King (assume no table for the king here)
     };
 
     const int INF = std::numeric_limits<int>::max()-1;
